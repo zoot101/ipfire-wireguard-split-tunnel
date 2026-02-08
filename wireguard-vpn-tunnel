@@ -504,10 +504,10 @@ read_config_file() {
   fi
 
   # Finally, Sanity check the CUSTOMPOSTROUTING & CUSTOMFORWARD Firewall Chains Exist
-  if ! iptables -S CUSTOMFORWARD &>"/dev/null"; then
+  if ! iptables --wait -S CUSTOMFORWARD &>"/dev/null"; then
     error "CUSTOMFORWARD Firewall Chain Not Found - Exiting"
   fi
-  if ! iptables -t nat -S CUSTOMPOSTROUTING &>"/dev/null"; then
+  if ! iptables --wait -t nat -S CUSTOMPOSTROUTING &>"/dev/null"; then
     error "CUSTOMPOSTROUTING Firewall Chain Not Found - Exiting"
   fi
 }
@@ -599,8 +599,8 @@ remove_firewall_rules() {
 
   # Remove each of the Rules Added Above
   for i in $(seq 0 1 $((N_tunnel_ips-1)) ); do
-    iptables --wait -D CUSTOMFORWARD -s "${tunnel_ips[$i]}" -o "${wg_vpn_interface}" -j ACCEPT
-    iptables --wait -D CUSTOMFORWARD -d "${tunnel_ips[$i]}" -i "${wg_vpn_interface}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    iptables --wait -D CUSTOMFORWARD -s "${tunnel_ips[$i]}" -o "${wg_vpn_interface}" -j ACCEPT || true
+    iptables --wait -D CUSTOMFORWARD -d "${tunnel_ips[$i]}" -i "${wg_vpn_interface}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || true
   done
 }
 
@@ -646,22 +646,22 @@ setup_dns_firewall_rules() {
     log " [START] Setting Up DNS Firewall Rules on VPN tunnel: ${wg_vpn_interface}..."
 
     if [ -n "${green_network}" ]; then
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p tcp --dports 53,853 -j DROP
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p udp --dports 53,853 -j DROP
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p udp --dports 53,853 -j DROP
     fi
     if [ -n "${blue_network}"  ]; then
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p tcp --dports 53,853 -j DROP
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p udp --dports 53,853 -j DROP
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p udp --dports 53,853 -j DROP
     fi
     if [ -n "${orange_network}" ]; then
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP
     fi
 
     # Allow each of the IP addresses of the Local DNS Servers through the tunnel
     for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT
-      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT
+      iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT
     done
   fi
 }
@@ -674,22 +674,22 @@ remove_dns_firewall_rules() {
     log " [STOP] Removing DNS Firewall Rules on VPN tunnel: ${wg_vpn_interface}..."
 
     if [ -n "${green_network}" ]; then
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p tcp --dports 53,853 -j DROP
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p udp --dports 53,853 -j DROP
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p tcp --dports 53,853 -j DROP || true
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p udp --dports 53,853 -j DROP || true
     fi
     if [ -n "${blue_network}"  ]; then
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p tcp --dports 53,853 -j DROP
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p udp --dports 53,853 -j DROP
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p tcp --dports 53,853 -j DROP || true
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p udp --dports 53,853 -j DROP || true
     fi
     if [ -n "${orange_network}" ]; then
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP || true
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP || true
     fi
 
     # Allow each of the IP addresses of the Local DNS Servers through the tunnel
     for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT
-      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT || true
+      iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT || true
     done
   fi
 }
@@ -709,7 +709,7 @@ remove_excluded_ips() {
   if [ $N_excluded_ips -gt 0 ]; then
     log " [STOP] Removing Policy Based Routing Rules to Exclude IPs..."
     for i in $(seq 0 1 $((N_excluded_ips-1)) ); do
-      ip rule delete from "${excluded_ips[$i]}" table main priority $((excluded_priority+i))
+      ip rule delete from "${excluded_ips[$i]}" table main priority $((excluded_priority+i)) || true
     done
   fi
 }
