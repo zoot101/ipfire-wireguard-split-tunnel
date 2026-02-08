@@ -1,0 +1,858 @@
+#!/bin/bash
+
+#######################################
+# IPFire Wireguard VPN Tunnel Script
+#######################################
+# Originally inspired from here:
+# https://github.com/gvelim/ipfire_wg
+#
+# Usage:
+# wireguard-vpn-tunnel (start|stop|status|restart|reload) [--debug]
+#
+# 01. Place a copy in /etc/init.d/
+# 02. Give it the right permissions:
+#    $ chmod 754 /etc/init.d/wireguard-vpn-tunnel
+#    $ chown root:root /etc/init.d/wireguard-vpn-tunnel
+#
+# 03. Obtain a Wireguard Config from a VPN Provider like MullVad, NordVPN etc.
+#
+# 04. Populate the Config file - /etc/wireguard-vpn-tunnel/wireguard-vpn-tunnel.conf
+#
+# 05. Test the script out with the debug switch active:
+#    $ /etc/init.d/wireguard-vpn-tunnel start --debug
+#    $ /etc/init.d/wireguard-vpn-tunnel status --debug
+#    $ /etc/init.d/wireguard-vpn-tunnel stop --debug
+# 
+# 06. Then test it out on the desired devices on the Green/Blue/Orange
+#
+# 07. If there are no errors - Enable on Startup like so:
+#
+# 08. Set up the permissions
+#    * chown root:root /etc/init.d/wireguard-vpn-tunnel
+#    * chmod 754 /etc/init.d/wireguard-vpn-tunnel
+# 09. Create the appropriate symlink:
+#    * ln -s /etc/init.d/wireguard-vpn-tunnel S60wireguard-vpn-tunnel
+#
+# 10. Reboot the Firewall to test it out, the tunnel and
+#     routing should be activated on startup.
+#
+# 11. To Disable on Startup - Delete the above symlink
+#
+# 12. Finally note that if any issues are caused by incorrect parameters in the
+#     config files, disabling the script upon startup and rebooting the IPFire
+#     system should solve them.
+
+#######################################
+# Parameters
+#######################################
+# Script Version
+version="0.2.0"
+
+# Script Config File
+config_file="/etc/wireguard-vpn-tunnel/wireguard-vpn-tunnel.conf"
+
+# VPN Adapter Naming & Routing Table
+table_name="wg-vpn"
+table_ID="202"
+policy_priority="1000"
+excluded_priority="900"
+
+# IPv4 Regex to validate IPs
+ipv4_regex='^(([1-9]?[0-9]|1[0-9][0-9]|2([0-4][0-9]|5[0-5]))\.){3}([1-9]?[0-9]|1[0-9][0-9]|2([0-4][0-9]|5[0-5]))$'
+
+# Use set -e to exit if any command exits in error
+set -e
+
+#######################################
+# Include Necessary Functions
+#######################################
+shopt -s nullglob
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+#######################################
+# Main Function
+#######################################
+main() {
+
+  # Determine Input Arguments
+  parse_arguments "$@"
+  
+  # Check for root
+  check_for_root
+
+  # Check for Required Commands
+  check_for_required_commands
+
+  # Read the config file
+  read_config_file
+  
+  # Print Greeting
+  print_greeting
+ 
+  # Main Case Statement 
+  # 1. Start the Tunnel
+  case "${action}" in
+  start)
+  
+    # Print Standard Message Regardless if --debug is not used
+    if [ "${debug_mode}" == "no" ]; then boot_mesg "Starting WireGuard VPN Tunnel..."; fi
+
+    # Check if the Tunnel Exists - If so exit
+    check_if_tunnel_already_exists
+  
+    # Set a trap to clean up if this block fails or is interrupted.
+    trap stop_tunnel EXIT INT TERM
+  
+    # Start the Tunnel
+    start_tunnel
+  
+    # If we reached here, bringing up the tunnel was successful, disable
+    # the trap for a clean exit
+    trap - EXIT INT TERM
+    exit 0
+    ;;
+  
+  # 2. Stop the Tunnel
+  stop)
+  
+    # Print Standard Message Regardless if --debug is not used
+    if [ "${debug_mode}" == "no" ]; then boot_mesg "Stopping WireGuard VPN Tunnel..."; fi
+  
+    # Check if the Tunnel does not exist - If so exit
+    check_if_tunnel_does_not_exist
+  
+    # Stop the Tunnel
+    stop_tunnel
+    exit 0
+    ;;
+  
+  # 3. Show the Status (Debug Mode Only)
+  status)
+  
+    # Show the Status
+    if [ "${debug_mode}" == "yes" ]; then show_status; fi
+    exit 0
+    ;;
+
+  # 4. Reload
+  reload)
+    $0 stop
+    sleep 3
+    $0 start
+    exit 0
+    ;;
+
+  # 5. Reload
+  restart)
+    $0 stop
+    sleep 3
+    $0 start
+    exit 0
+    ;;
+
+  # 6. Print Help
+  -h|--help)
+    print_help
+    ;;
+
+  # 7. All Other Arguments - Print Help & Exit
+  *)
+    echo "ERROR: Unsupported Action ${action}"
+    echo ""
+    print_help
+    ;;
+
+  esac
+  exit 0
+}
+
+#######################################
+# Functions
+#######################################
+
+# Parse Input Arguments to Script
+parse_arguments() {
+
+  # Valid Usage:
+  # wireguard-vpn-tunnel [ --debug | --help ] [ ACTION ]
+
+  # Unset below variables
+  action=
+  debug_mode=
+  custom_config_file=
+
+  # Loop through each of the input arguments
+  while (( ${#} )); do
+    case "${1}" in
+
+      # Determine Action
+      start)
+        action="start"
+      ;;
+      stop)
+        action="stop"
+      ;;
+      reload)
+        action="reload"
+      ;;
+      restart)
+        action="restart"
+      ;;
+      status)
+        action="status"
+      ;;
+
+      # Determine Options
+      -h|--help)
+        print_help
+      ;;
+      -d|--debug)
+        debug_mode="yes"
+      ;;
+      -c|--config)
+        shift 1
+        if [ ! -f "${1}" ]; then
+          echo "ERROR: Specified Config File ${1} does not exist - Exiting"
+          exit 1
+        else
+          custom_config_file="${1}"
+        fi
+      ;;
+
+      # Unsupported Input
+      *)
+        echo "ERROR: Unsupported Input ${1}"
+        echo ""
+        print_help
+      ;;
+    esac
+    shift 1
+  done
+
+  # Check for Undefined actions
+  if [ -z "${action}" ]; then
+    echo "ERROR: No Action given - See below:"
+    echo ""
+    print_help
+  fi
+
+  # Check for Debug Mode
+  if [ -z "${debug_mode}" ]; then
+    debug_mode="no"
+  fi
+}
+
+# Print Message (if Debug Mode is active)
+log() {
+  if [ "${debug_mode}" == "yes" ]; then
+    echo "$@"
+  fi
+}
+
+# Exit with Error
+error() {
+  if [ "${debug_mode}" == "yes" ]; then
+    echo "ERROR: ""$@"
+  fi
+  exit 1
+}
+
+# Check for Root
+check_for_root() {
+  if [ $(id -u) -ne 0 ]; then
+    error "Script should be run as root - Exiting"
+  fi
+}
+
+# Check For a Number
+is_number() {
+  local number_regex='^[0-9]+$'
+  if ! [[ "$1" =~ $number_regex ]]; then
+    return 1
+  else
+    return 0
+  fi
+}
+
+# Function to valid correct syntax of IP entries in Config File
+validate_ip_entry() {
+  local input=("$@")
+  local N_ips=${#input[@]}
+
+  # Check each of the IPs - The IP & the Network Prefix
+  for i in $(seq 0 1 $((N_ips-1))); do
+    local ip=$( echo "${input[$i]}" | awk -F "/" '{print $1}' )
+    local prefix=$( echo "${input[$i]}" | awk -F "/" '{print $2}' )
+
+    # Check the prefix is valid if defined
+    if [ -n "${prefix}" ]; then
+      if ! is_number "${prefix}"; then
+        error "${input[$i]} has an invalid prefix - Exiting"
+      elif [ ${prefix} -lt 0 ] || [ ${prefix} -gt 32 ]; then
+        error "${input[$i]} has an invalid prefix - Exiting"
+      fi
+    fi
+
+    # Check the IP is valid
+    if ! echo "${ip}" | grep -qEo "${ipv4_regex}"; then
+      error "${input[$i]} is an invalid IP - Exiting"
+    fi
+  done
+}
+
+# Sanity Check Required Commands are present
+check_for_required_commands() {
+  if ! which sed &>"/dev/null"; then error "sed command not found in \$PATH - Exiting"; fi
+  if ! which ip &>"/dev/null"; then error "ip command not found in \$PATH - Exiting"; fi
+  if ! which iptables &>"/dev/null"; then error "iptables command not found in \$PATH - Exiting"; fi
+  if ! which grep &>"/dev/null"; then error "grep command not found in \$PATH - Exiting"; fi
+  if ! which awk &>"/dev/null"; then error "awk command not found in \$PATH - Exiting"; fi
+}
+
+# Check if Interface exists (Green, Blue, Orange)
+check_interface_exists() {
+  if ! ip a | grep -qw "${1}"; then
+    error "Interface ${1} does not exist - Exiting"
+  fi
+}
+
+# Print Greeting (If Debug Mode is active)
+print_greeting() {
+  log ""
+  log "#######################################"
+  log "# Wireguard VPN Tunnel Version: ${version}"
+  log "#######################################"
+  if [ -n "${green_network}" ]; then log " * Green Network:" "${green_network}"; fi
+  if [ -n "${blue_network}" ]; then log " * Blue Network:" "${blue_network}"; fi
+  if [ -n "${orange_network}" ]; then log " * Orange Network:" "${orange_network}"; fi
+  if [ -n "${roadwarrior_network}" ]; then log " * Roadwarrior Network:" "${roadwarrior_network}"; fi
+  log " * Wireguard Tunnel Interface:" "${wg_vpn_interface}"
+  log " * Wireguard Tunnel Interface Local IP:" "${wg_local_ip}"
+  log " * Wireguard Tunnel Endpoint IP & Port:" "${wg_endpoint}"
+  log " * Number of IP Entries for Tunnel:" $N_tunnel_ips
+  for i in $(seq 0 1 $((N_tunnel_ips-1)) ); do
+    log "    - ${tunnel_ips[$i]}"
+  done
+  if [ -n "${excluded_ips}" ]; then
+    log " * Number of IP Entries to Exclude from Tunnel:" $N_excluded_ips
+    for i in $(seq 0 1 $((N_excluded_ips-1)) ); do
+      log "    - ${excluded_ips[$i]}"
+    done
+  else
+    log " * Number of IP Entries to Exclude from Tunnel: NONE"
+  fi
+  if [ "${block_tunnel_dns}" ]; then
+    log " * Restrict Tunnel DNS: Yes"
+    log " * Number of Local DNS Servers:" $N_local_dns_servers
+    for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
+      log "    - ${local_dns_servers[$i]}"
+    done
+  else
+    log " * Restrict Tunnel DNS: No"
+  fi
+  log "#######################################"
+  log ""
+}
+
+# Read Config File
+read_config_file() {
+
+  # Zero All Config File Variables
+  wg_vpn_interface=
+  roadwarrior_network=
+  roadwarrior_iface=
+  green_iface=
+  green_network=
+  blue_iface=
+  blue_network=
+  orange_iface=
+  orange_network=
+  tunnel_ips=
+  excluded_ips=
+  wg_config_file=
+  wg_private_key=
+  wg_public_key=
+  wg_endpoint=
+  wg_local_ip=
+  block_tunnel_dns=
+  local_dns_servers=
+
+  # Read the Configuration File - Default Location or what was specifed with the
+  # -c|--config option
+  if [ -f "${custom_config_file}" ]; then
+    log "INFO: Main Config File     : ${custom_config_file}"
+    . "${custom_config_file}"
+  elif [ -f "${config_file}" ]; then
+    log "INFO: Main Config File     : ${config_file}"
+    . "${config_file}"
+  else
+    exit 1
+  fi
+
+  # Check for all required parameters, if any do not exist exit with an Error
+  # Wireguard Interface Name & Associated Config File from VPN Provider
+  if [ -z "${wg_vpn_interface}" ]; then
+    error "No wg_vpn_interface defined in config file - Exiting"
+  fi
+  if [ "${wg_vpn_interface}" == "wg0" ]; then
+    error "wg_vpn_interface should not be wg0 to avoid conflicts - Exiting"
+  fi
+  if [ ! -f "${wg_config_file}" ]; then
+    error "Wireguard Config File ${wg_config_file} does not exist - Exiting"
+  else
+    log "INFO: Wireguard Config File: ${wg_config_file}"
+  fi
+
+  # Check that at least some IPs for the Tunnel are Defined
+  if [ -z "${tunnel_ips}" ]; then
+    error "No tunnel_ips defined in config file - Exiting"
+  fi
+
+  # Every IPFire Configuration has a Green network - Exit if the interface & Network are not defined
+  if [ -z "${green_iface}" ]; then error "No green_iface defined in config file"; fi
+  if [ -z "${green_network}" ]; then error "No green_network defined in config File - Exiting"; fi
+
+  # Blue (Optional)
+  if [ -z "${blue_iface}" ] && [ -n "${blue_network}" ]; then
+    error "For the Blue Network, a blue_iface AND blue_network should be defined in the config file - Exiting"
+  elif [ -n "${blue_iface}" ] && [ -z "${blue_network}" ]; then
+    error "For the Blue Network, a blue_iface AND blue_network should be defined in the config file - Exiting"
+  fi
+
+  # Orange (Optional)
+  if [ -z "${orange_iface}" ] && [ -n "${orange_network}" ]; then
+    error "For the Orange Network, a orange_iface AND orange_network should be defined in the config file - Exiting"
+  elif [ -n "${orange_iface}" ] && [ -z "${orange_network}" ]; then
+    error "For the Orange Network, a orange_iface AND orange_network should be defined in the config file - Exiting"
+  fi
+
+  # Roadwarrior (Wireguard/OpenVPN - Optional)
+  if [ -z "${roadwarrior_iface}" ] && [ -n "${roadwarrior_network}" ]; then
+    error "If using a Wireguard/OpenVPN roadwarrior network, a roadwarrior_iface AND roadwarrior_network should be defined in the config file - Exiting"
+  elif [ -n "${roadwarrior_iface}" ] && [ -z "${roadwarrior_network}" ]; then
+    error "If using a Wireguard/OpenVPN roadwarrior network, a roadwarrior_iface AND roadwarrior_network should be defined in the config file - Exiting"
+  fi
+
+  # Check if the User wishes to only allow certain IPs to access DNS over the tunnel
+  if [ -n "${block_tunnel_dns}" ] && [ -z "${local_dns_servers}" ]; then
+    error "If restricting DNS through the tunnel to certain IPs, both the block_tunnel_dns and local_dns_servers should be defined in the config file - Exiting"
+  elif [ -z "${block_tunnel_dns}" ] && [ -n "${local_dns_servers}" ]; then
+    error "If restricting DNS through the tunnel to certain IPs, both the block_tunnel_dns and local_dns_servers should be defined in the config file - Exiting"
+  fi 
+
+  # Check if the block_tunnel_dns is either yes or no if defined
+  if [ -n "${block_tunnel_dns}" ]; then
+    if [ "${block_tunnel_dns}" != "yes" ] && [ "${block_tunnel_dns}" != "no" ]; then
+      error "block_tunnel_dns parameter should be either yes or no - Exiting"
+    fi
+  fi
+
+  # Get Number of Local DNS Servers defined if restricting DNS through the tunnel
+  if [ "${block_tunnel_dns}" == "yes" ]; then
+    N_local_dns_servers=${#local_dns_servers[@]}
+  else
+    N_local_dns_servers=0
+  fi
+
+  # Get Number of IP Addresses to exclude from being routed over the tunnel 
+  if [ -n "${excluded_ips}" ]; then
+    N_excluded_ips=${#excluded_ips[@]}
+  else
+    N_excluded_ips=0
+  fi
+
+  # Check the Interfaces given in the Config File actually exist to avoid accidents
+  if [ -n "${green_iface}" ]; then check_interface_exists "${green_iface}"; fi
+  if [ -n "${blue_iface}" ]; then check_interface_exists "${blue_iface}"; fi
+  if [ -n "${orange_iface}" ]; then check_interface_exists "${orange_iface}"; fi
+  if [ -n "${roadwarrior_iface}" ]; then check_interface_exists "${roadwarrior_iface}"; fi
+
+  # Validate All IP Entries are of Correct Syntax in the Config File
+  if [ -n "${green_network}" ]; then validate_ip_entry "${green_network}"; fi
+  if [ -n "${blue_network}" ]; then validate_ip_entry "${blue_network}"; fi
+  if [ -n "${orange_network}" ]; then validate_ip_entry "${orange_network}"; fi
+  if [ -n "${roadwarrior_network}" ]; then validate_ip_entry "${roadwarrior_network}"; fi
+  if [ -n "${tunnel_ips[0]}" ]; then validate_ip_entry "${tunnel_ips[@]}"; fi
+  if [ -n "${excluded_ips[0]}" ]; then validate_ip_entry "${excluded_ips[@]}"; fi
+  if [ -n "${local_dns_servers[0]}" ]; then validate_ip_entry "${local_dns_servers[@]}"; fi
+
+  # Get the Number of IP Address Entries to be routed over the tunnel
+  N_tunnel_ips=${#tunnel_ips[@]}
+
+  # Get the Required Parameters from the Wireguard VPN Providers Config File
+  # Important parameters are the Private & Public Keys, the local IP and the Endpoint
+  # The use of awk is to only use the ipv4 configuration if the provider supplies both
+  # since IPFire v2.2.X does not support ipv6
+  wg_private_key=$(grep "PrivateKey" "${wg_config_file}" | sed "s/ //g;s/^PrivateKey=//")
+  wg_public_key=$(grep "PublicKey" "${wg_config_file}" | sed "s/ //g;s/^PublicKey=//")
+  wg_endpoint=$(grep "Endpoint" "${wg_config_file}" | sed "s/ //g;s/^Endpoint=//")
+  wg_local_ip=$(grep "Address" "${wg_config_file}" | sed "s/ //g;s/^Address=//" | awk -F "," '{print $1}')
+
+  # Exit if any of the above parameters are not defined
+  if [ -z "${wg_private_key}" ]; then error "No wg_private_key defined in config file - Exiting"; fi
+  if [ -z "${wg_public_key}" ]; then error "No wg_public_key defined in config file - Exiting"; fi
+  if [ -z "${wg_endpoint}" ]; then error "No wg_endpoint defined in config file - Exiting"; fi
+  if [ -z "${wg_local_ip}" ]; then error "No wg_local_ip defined in config file - Exiting"; fi
+
+  # Sanity Check to Validate the Endpoint Address, Port & Local Address
+  validate_ip_entry "${wg_local_ip}"
+  validate_ip_entry $( echo "${wg_endpoint}" | awk -F ":" '{print $1}')
+  if ! is_number $(echo "${wg_endpoint}" | awk -F ":" '{print $2}'); then
+    error "wg_endpoint: ${wg_endpoint} Port is invalid - Exiting"
+  fi
+
+  # Finally, Sanity check the CUSTOMPOSTROUTING & CUSTOMFORWARD Firewall Chains Exist
+  if ! iptables -S CUSTOMFORWARD &>"/dev/null"; then
+    error "CUSTOMFORWARD Firewall Chain Not Found - Exiting"
+  fi
+  if ! iptables -t nat -S CUSTOMPOSTROUTING &>"/dev/null"; then
+    error "CUSTOMPOSTROUTING Firewall Chain Not Found - Exiting"
+  fi
+}
+
+# Bring up the Wireguard Interface using the VPN Providers Config File
+create_wireguard_interface() {
+
+  log " [START] Bringing up VPN tunnel: ${wg_vpn_interface}..."
+
+  # 1. Create the WireGuard interface
+  ip link add "${wg_vpn_interface}" type wireguard
+
+  # 2. Assign the local IP address to the interface.
+  ip addr add "${wg_local_ip}" dev "${wg_vpn_interface}"
+
+  log " [START] Activate wireguard VPN profile on ${wg_vpn_interface}..."
+
+  # 3. Apply the necessary parameters from the wireguard config file
+  wg set "${wg_vpn_interface}" private-key <( echo "${wg_private_key}") \
+                               peer "${wg_public_key}" \
+                               endpoint "${wg_endpoint}" \
+                               allowed-ips "0.0.0.0/0"
+
+  # 4. Bring the interface UP.
+  ip link set "${wg_vpn_interface}" up
+}
+
+# Remove the Wireguard Interface
+remove_wireguard_interface() {
+  log " [STOP] Tearing down ${wg_vpn_interface}..."
+  ip link del "${wg_vpn_interface}" 2>/dev/null || true
+}
+
+# Create Custom Routing Table
+create_custom_routing_table() {
+
+  log " [START] Creating Custom Routing Table..."
+
+  # 1. Register the custom routing table if it doesn't already exist.
+  if ! grep -q "${table_name}" "/etc/iproute2/rt_tables"; then
+    echo "${table_ID} ${table_name}" >> "/etc/iproute2/rt_tables"
+  fi
+
+  # 2. Populate the custom routing table with a complete set of routes.
+  #    depending on whether a green, blue or orange network are defined
+  ip route flush table "${table_name}" 2>/dev/null || true
+  if [ -n "${green_network}" ]; then
+    ip route add "${green_network}" dev "${green_iface}" table "${table_name}"
+  fi
+  if [ -n "${blue_network}" ]; then
+    ip route add "${blue_network}" dev "${blue_iface}" table "${table_name}"
+  fi
+  if [ -n "${orange_network}" ]; then
+    ip route add "${orange_network}" dev "${orange_iface}" table "${table_name}"
+  fi
+  if [ -n "${roadwarrior_network}" ]; then
+    ip route add "${roadwarrior_network}" dev "${roadwarrior_iface}" table "${table_name}"
+  fi
+  ip route add default dev "${wg_vpn_interface}" table "${table_name}"
+}
+
+# Setup Firewall Rules with Custom NAT & Forwarding Rules
+setup_firewall_rules() {
+
+  log " [START] Adding NAT & Forwarding rules..."
+
+  # Add a Masquerade rule for all traffic exiting via new VPN tunnel interface
+  iptables --wait -t nat -A CUSTOMPOSTROUTING -o "${wg_vpn_interface}" -j MASQUERADE
+
+  # 2. Add Individual Firewall Rules to the CUSTOMFORWARD Chain for each of the IPs defined
+  #    in the config file to allow them to be routed over the tunnel
+  for i in $(seq 0 1 $((N_tunnel_ips-1)) ); do
+
+    # Calculate Positions
+    position1=$((2*i+1))
+    position2=$((2*i+2))
+
+    # Add Firewall Rules - Accept outbound connection & inbound if established
+    iptables --wait -I CUSTOMFORWARD $position1 -s "${tunnel_ips[$i]}" -o "${wg_vpn_interface}" -j ACCEPT
+    iptables --wait -I CUSTOMFORWARD $position2 -d "${tunnel_ips[$i]}" -i "${wg_vpn_interface}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  done
+}
+
+# Remove Firewall Custom NAT & Forwarding Rules
+remove_firewall_rules() {
+
+  # Remove the Masquerade Rule
+  iptables --wait -t nat -D CUSTOMPOSTROUTING -o "${wg_vpn_interface}" -j MASQUERADE 2>/dev/null || true
+
+  # Remove each of the Rules Added Above
+  for i in $(seq 0 1 $((N_tunnel_ips-1)) ); do
+    iptables --wait -D CUSTOMFORWARD -s "${tunnel_ips[$i]}" -o "${wg_vpn_interface}" -j ACCEPT
+    iptables --wait -D CUSTOMFORWARD -d "${tunnel_ips[$i]}" -i "${wg_vpn_interface}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  done
+}
+
+# Activate Main Policy Based Routing Rule(s)
+activate_policy_based_routing() {
+
+  log " [START] Activating Policy Based Routing..."
+  for i in $(seq 0 1 $((N_tunnel_ips-1)) ); do
+    ip rule add from "${tunnel_ips[$i]}" table "${table_name}" priority $((policy_priority+i))
+  done
+}
+
+# Remove the Main Policy Based Routing Rule(s)
+remove_policy_based_routing() {
+
+  log " [STOP] Removing Policy Based Routing..."
+  for i in $(seq 0 1 $((N_tunnel_ips-1)) ); do
+    ip rule del from "${tunnel_ips[$i]}" table "${table_name}" priority $((policy_priority+i)) || true
+  done
+}
+
+# Check Tunnel already exists - If so, exit & do nothing (For start_tunnel)
+check_if_tunnel_already_exists() {
+  if ip link show "${wg_vpn_interface}" >/dev/null 2>&1; then
+    log " [WARNING] Tunnel ${wg_vpn_interface} already appears to be active. No action taken."
+    exit 0
+  fi
+}
+
+# Check if the Tunnel does not exist - Exit if so (For stop_tunnel)
+check_if_tunnel_does_not_exist() {
+  if ! ip link show "${wg_vpn_interface}" >/dev/null 2>&1; then
+    log " [WARNING] Tunnel ${wg_vpn_interface} does not exist. No action taken."
+    exit 0
+  fi
+}
+
+# Setup DNS Firewall Rules - Allow only certain IPs to send DNS requests down the Tunnel
+setup_dns_firewall_rules() {
+
+  # Block DNS Requests from Green, Blue & Orange Networks through the Tunnel by default
+  if [ "${block_tunnel_dns}" == "yes" ]; then
+    log " [START] Setting Up DNS Firewall Rules on VPN tunnel: ${wg_vpn_interface}..."
+
+    if [ -n "${green_network}" ]; then
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p udp --dports 53,853 -j DROP
+    fi
+    if [ -n "${blue_network}"  ]; then
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p udp --dports 53,853 -j DROP
+    fi
+    if [ -n "${orange_network}" ]; then
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP
+    fi
+
+    # Allow each of the IP addresses of the Local DNS Servers through the tunnel
+    for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT
+      iptables -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT
+    done
+  fi
+}
+
+# Remove DNS Firewall Rules - Remove above DNS Firewall Rules
+remove_dns_firewall_rules() {
+
+  # Block DNS Requests from Green, Blue & Orange Networks through the Tunnel by default
+  if [ "${block_tunnel_dns}" == "yes" ]; then
+    log " [STOP] Removing DNS Firewall Rules on VPN tunnel: ${wg_vpn_interface}..."
+
+    if [ -n "${green_network}" ]; then
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${green_network}" -m multiport -p udp --dports 53,853 -j DROP
+    fi
+    if [ -n "${blue_network}"  ]; then
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${blue_network}" -m multiport -p udp --dports 53,853 -j DROP
+    fi
+    if [ -n "${orange_network}" ]; then
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP
+    fi
+
+    # Allow each of the IP addresses of the Local DNS Servers through the tunnel
+    for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT
+      iptables -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT
+    done
+  fi
+}
+
+# Add rules to exclude certain IPs from being routed over the tunnel
+add_excluded_ips() {
+  if [ $N_excluded_ips -gt 0 ]; then
+    log " [START] Adding Policy Based Routing Rules to Exclude IPs..."
+    for i in $(seq 0 1 $((N_excluded_ips-1)) ); do
+      ip rule add from "${excluded_ips[$i]}" table main priority $((excluded_priority+i))
+    done
+  fi
+}
+
+# Remove the above rules
+remove_excluded_ips() {
+  if [ $N_excluded_ips -gt 0 ]; then
+    log " [STOP] Removing Policy Based Routing Rules to Exclude IPs..."
+    for i in $(seq 0 1 $((N_excluded_ips-1)) ); do
+      ip rule delete from "${excluded_ips[$i]}" table main priority $((excluded_priority+i))
+    done
+  fi
+}
+
+# Print Help Function
+print_help() {
+  echo "Usage: ${0} [ OPTIONS ] { ACTION } "
+  echo ""
+  echo " ACTION (Required) can be one of the following:"
+  echo ""
+  echo "  start      : Start the VPN Tunnel - Does the Following:"
+  echo "               * Bring up a new Wireguard Interface using the VPN Providers Config File"
+  echo "               * Create a custom routing table"
+  echo "               * Add the necessary firewall rules to allow routing over the Tunnel"
+  echo "               * Setup firewall rules to block all DNS over the tunnel with the exception"
+  echo "                 of dedicated DNS Servers (if enabled in config file)"
+  echo "               * Activate Policy Based Routing Rules to activate the VPN Tunnel"
+  echo "               * Add additional Policy Based Routing Rules to exclude certain IPs from"
+  echo "                 being routed over the tunnel (if enabled in config file)"
+  echo ""
+  echo "  stop       : Stop the VPN Tunnel - Does the Following:"
+  echo "               * Remove the Policy Based Routing rules"
+  echo "               * Remove the main firewall rules created above"
+  echo "               * Remove the Policy Based Routing rules to exclude certain IPs"
+  echo "                 (if enabled in config file)"
+  echo "               * Remove the Policy Based Routing rules to exclude certain IPs from"
+  echo "                 being routed over the tunnel (if enabled in config file)"
+  echo "               * Remove the firewall rules to block all DNS over the tunnel with the exception"
+  echo "                 of dedicated DNS Servers (if enabled in config file)"
+  echo "               * Remove the Wireguard Interface"
+  echo ""
+  echo "  status     : Display the Status of the Following (if --debug is used - see below:)"
+  echo "               * Custom Routing Table"
+  echo "               * Policy Based Routing Rules"
+  echo "               * Custom Firewall Rules"
+  echo "               * Wireguard Interface Status"
+  echo ""
+  echo "  reload     : Stop & Restart the VPN Tunnel"
+  echo ""
+  echo "  restart    : Stop & Restart the VPN Tunnel"
+  echo ""
+  echo " OPTIONS (Optional) can be the following:"
+  echo ""
+  echo "  -d|--debug : Print out detailed information about configuration and each of theabove steps"
+  echo "               as by default the script has a quiet output"
+  echo ""
+  echo "  -h|--help  : Print this message"
+  echo ""
+  echo " CONFIG-FILE : Default: /etc/wireguard-vpn-tunnel/wireguard-vpn-tunnel.conf"
+  echo ""
+  exit 0
+}
+
+#######################################
+# Main Functions
+#######################################
+# Start the VPN Tunnel
+start_tunnel() {
+
+  # 1. Create the Wireguard Interface
+  create_wireguard_interface
+
+  # 2. Create the Custom Routing Table
+  create_custom_routing_table
+
+  # 3. Configure Firewall with Custom NAT & Forwarwarding Rules
+  setup_firewall_rules
+
+  # 4. Set up the DNS Firewall rules if one is using
+  setup_dns_firewall_rules
+
+  # 5 - Activate the Policy Based Routing
+  activate_policy_based_routing
+
+  # 6. Add the policy rules to exclude certain IPs
+  add_excluded_ips
+
+  # 7. Flush route cache to ensure the new rules are applied immediately.
+  ip route flush cache
+
+  log " [START] VPN tunnel and policy routing are active."
+}
+
+# Stop the VPN Tunnel
+stop_tunnel() {
+
+  # 1. Remove the policy rule. This immediately stops routing traffic to the VPN table.
+  remove_policy_based_routing
+
+  # 2. Remove Firewall rules.
+  remove_firewall_rules
+
+  # 3. Add the policy rules to exclude certain IPs
+  remove_excluded_ips
+
+  # 4. Set up the DNS Firewall rules if one is using
+  remove_dns_firewall_rules
+
+  # 5. Remove the interface. This is the cleanest way to stop everything.
+  remove_wireguard_interface
+
+  log " [STOP] VPN tunnel and all associated rules have been removed."
+}
+
+# Show the Status of the Tunnel
+show_status() {
+
+  log " [STATUS] VPN Configuration Status ==="
+  log ""
+
+  log " [STATUS] Routing table '${table_name}':"
+  ip route list table ${table_name} 2>/dev/null || log " Table '${table_name}' not found or empty"
+  log ""
+
+  log " [STATUS] Policy routing rules:"
+  ip rule show
+  log ""
+
+  log " [STATUS] CUSTOMFORWARD Rirewall Rules:"
+  iptables --wait -L CUSTOMFORWARD -n -v 2>/dev/null || log " CUSTOMFORWARD chain not found"
+  log ""
+
+  log " [STATUS] CUSTOMPOSTROUTING NAT Rules:"
+  iptables --wait -t nat -L CUSTOMPOSTROUTING -n -v 2>/dev/null || log " CUSTOMPOSTROUTING chain not found"
+  log ""
+
+  log " [STATUS] WireGuard VPN Interface Status:"
+  if ip link show "${wg_vpn_interface}" >/dev/null 2>&1; then
+    log " * WireGuard Configuration:"
+    log ""
+    wg show "${wg_vpn_interface}" 2>/dev/null || log " WireGuard config not available"
+    log ""
+    log " * Interface Addresses:"
+    log ""
+    ip addr show "${wg_vpn_interface}"
+  else
+    log " * WireGuard Interface ${wg_vpn_interface} not found"
+  fi
+  log ""
+}
+
+#######################################
+# Main Function
+#######################################
+main "$@"
+
