@@ -1,53 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 #######################################
-# IPFire Wireguard VPN Tunnel Script
+# IPFire Wireguard VPN Split Tunnel Script
 #######################################
-# Originally inspired from here:
-# https://github.com/gvelim/ipfire_wg
-#
-# Usage:
-# wireguard-vpn-tunnel (start|stop|status|restart|reload) [--debug]
-#
-# 01. Place a copy in /etc/init.d/
-# 02. Give it the right permissions:
-#    $ chmod 754 /etc/init.d/wireguard-vpn-tunnel
-#    $ chown root:root /etc/init.d/wireguard-vpn-tunnel
-#
-# 03. Obtain a Wireguard Config from a VPN Provider like MullVad, NordVPN etc.
-#
-# 04. Populate the Config file - /etc/wireguard-vpn-tunnel/wireguard-vpn-tunnel.conf
-#
-# 05. Test the script out with the debug switch active:
-#    $ /etc/init.d/wireguard-vpn-tunnel start --debug
-#    $ /etc/init.d/wireguard-vpn-tunnel status --debug
-#    $ /etc/init.d/wireguard-vpn-tunnel stop --debug
-# 
-# 06. Then test it out on the desired devices on the Green/Blue/Orange
-#
-# 07. If there are no errors - Enable on Startup like so:
-#
-# 08. Set up the permissions
-#    * chown root:root /etc/init.d/wireguard-vpn-tunnel
-#    * chmod 754 /etc/init.d/wireguard-vpn-tunnel
-# 09. Create the appropriate symlink:
-#    * ln -s /etc/init.d/wireguard-vpn-tunnel S60wireguard-vpn-tunnel
-#
-# 10. Reboot the Firewall to test it out, the tunnel and
-#     routing should be activated on startup.
-#
-# 11. To Disable on Startup - Delete the above symlink
-#
-# 12. Finally note that if any issues are caused by incorrect parameters in the
-#     config files, disabling the script upon startup and rebooting the IPFire
-#     system should solve them.
+# Github Page: https://github.com/zoot101/ipfire-wireguard-split-tunnel
+#######################################
+
+# Version 
+version="0.2.1"
 
 #######################################
 # Parameters
 #######################################
-# Script Version
-version="0.2.0"
-
 # Script Config File
 config_file="/etc/wireguard-vpn-tunnel/wireguard-vpn-tunnel.conf"
 
