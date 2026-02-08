@@ -273,6 +273,7 @@ check_for_required_commands() {
   if ! which iptables &>"/dev/null"; then error "iptables command not found in \$PATH - Exiting"; fi
   if ! which grep &>"/dev/null"; then error "grep command not found in \$PATH - Exiting"; fi
   if ! which awk &>"/dev/null"; then error "awk command not found in \$PATH - Exiting"; fi
+  if ! which wg &>"/dev/null"; then error "wg command not found in \$PATH - Exiting"; fi
 }
 
 # Check if Interface exists (Green, Blue, Orange)
