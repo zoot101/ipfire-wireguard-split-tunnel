@@ -7,7 +7,7 @@
 #######################################
 
 # Version 
-version="0.2.1"
+version="0.3.0"
 
 #######################################
 # Parameters
@@ -308,7 +308,7 @@ print_greeting() {
   else
     log " * Number of IP Entries to Exclude from Tunnel: NONE"
   fi
-  if [ "${block_tunnel_dns}" ]; then
+  if [ "${block_tunnel_dns}" == "yes" ]; then
     log " * Restrict Tunnel DNS: Yes"
     log " * Number of Local DNS Servers:" $N_local_dns_servers
     for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
@@ -316,6 +316,11 @@ print_greeting() {
     done
   else
     log " * Restrict Tunnel DNS: No"
+  fi
+  if [ "${route_firewall_dns_into_tunnel}" == "yes" ]; then
+    log " * Route Firewall DNS into Tunnel: Yes"
+  else
+    log " * Route Firewall DNS into Tunnel: No"
   fi
   log "#######################################"
   log ""
@@ -343,6 +348,7 @@ read_config_file() {
   wg_local_ip=
   block_tunnel_dns=
   local_dns_servers=
+  route_firewall_dns_into_tunnel=
 
   # Read the Configuration File - Default Location or what was specifed with the
   # -c|--config option
@@ -410,8 +416,10 @@ read_config_file() {
   # Check if the block_tunnel_dns is either yes or no if defined
   if [ -n "${block_tunnel_dns}" ]; then
     if [ "${block_tunnel_dns}" != "yes" ] && [ "${block_tunnel_dns}" != "no" ]; then
-      error "block_tunnel_dns parameter should be either yes or no - Exiting"
+      error "block_tunnel_dns parameter should be either yes or no if defined - Exiting"
     fi
+  else
+    block_tunnel_dns="no"
   fi
 
   # Get Number of Local DNS Servers defined if restricting DNS through the tunnel
@@ -419,6 +427,15 @@ read_config_file() {
     N_local_dns_servers=${#local_dns_servers[@]}
   else
     N_local_dns_servers=0
+  fi
+
+  # Check if the User wants to Route the Firewall's DNS into the Tunnel
+  if [ -n "${route_firewall_dns_into_tunnel}" ]; then
+    if [ "${route_firewall_dns_into_tunnel}" != "yes" ] && [ "${route_firewall_dns_into_tunnel}" != "no" ]; then
+      error "route_firewall_dns_into_tunnel parameter should be either yes or no if defined - Exiting"
+    fi
+  else
+    route_firewall_dns_into_tunnel="no"
   fi
 
   # Get Number of IP Addresses to exclude from being routed over the tunnel 
@@ -468,12 +485,19 @@ read_config_file() {
     error "wg_endpoint: ${wg_endpoint} Port is invalid - Exiting"
   fi
 
-  # Finally, Sanity check the CUSTOMPOSTROUTING & CUSTOMFORWARD Firewall Chains Exist
+  # Finally, Sanity check the CUSTOMPOSTROUTING, CUSTOMFORWARD, CUSTOMINPUT & CUSTOMOUTPUT
+  # Chains exist
   if ! iptables --wait -S CUSTOMFORWARD &>"/dev/null"; then
     error "CUSTOMFORWARD Firewall Chain Not Found - Exiting"
   fi
   if ! iptables --wait -t nat -S CUSTOMPOSTROUTING &>"/dev/null"; then
     error "CUSTOMPOSTROUTING Firewall Chain Not Found - Exiting"
+  fi
+  if ! iptables --wait -S CUSTOMOUTPUT &>"/dev/null"; then
+    error "CUSTOMOUTPUT Firewall Chain Not Found - Exiting"
+  fi
+  if ! iptables --wait -S CUSTOMINPUT &>"/dev/null"; then
+    error "CUSTOMINPUT Firewall Chain Not Found - Exiting"
   fi
 }
 
@@ -679,6 +703,35 @@ remove_excluded_ips() {
   fi
 }
 
+# Send the Firewall DNS into the Tunnel
+send_firewall_dns_over_tunnel() {
+
+  # Add Firewall Rules to allow the Firewall itself to send traffic over the tunnel,
+  # and add a Policy Based rule to send everything to ports 53 or 853 over the tunnel
+  if [ "${route_firewall_dns_into_tunnel}" == "yes" ]; then
+    log " [START] Allowing the Firewall DNS into tunnel: ${wg_vpn_interface}..."
+    iptables --wait -I CUSTOMOUTPUT -o "${wg_vpn_interface}" -m multiport -p tcp --dports 53,853 -j ACCEPT
+    iptables --wait -I CUSTOMOUTPUT -o "${wg_vpn_interface}" -m multiport -p udp --dports 53,853 -j ACCEPT
+    iptables --wait -I CUSTOMINPUT -i "${wg_vpn_interface}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    ip rule add dport 53 table "${table_name}" priority $((policy_priority+200))
+    ip rule add dport 853 table "${table_name}" priority $((policy_priority+201))
+  fi
+}
+
+# Remove the Firewall DNS from the Tunnel
+remove_firewall_dns_from_tunnel() {
+
+  # Remove the Firewall Rules & Routing Rules added above
+  if [ "${route_firewall_dns_into_tunnel}" == "yes" ]; then
+    log " [STOP] Removing the Firewall DNS from going to the tunnel: ${wg_vpn_interface}..."
+    iptables --wait -D CUSTOMOUTPUT -o "${wg_vpn_interface}" -m multiport -p tcp --dports 53,853 -j ACCEPT || true
+    iptables --wait -D CUSTOMOUTPUT -o "${wg_vpn_interface}" -m multiport -p udp --dports 53,853 -j ACCEPT || true
+    iptables --wait -D CUSTOMINPUT -i "${wg_vpn_interface}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT || true
+    ip rule delete dport 53 table "${table_name}" priority $((policy_priority+200)) || true
+    ip rule delete dport 853 table "${table_name}" priority $((policy_priority+201)) || true
+  fi
+}
+
 # Print Help Function
 print_help() {
   echo "Usage: ${0} [ OPTIONS ] { ACTION } "
@@ -718,6 +771,8 @@ print_help() {
   echo ""
   echo " OPTIONS (Optional) can be the following:"
   echo ""
+  echo "  -c|--config PATH-TO-CONFIG-FILE : Override default config file path (below)"
+  echo ""
   echo "  -d|--debug : Print out detailed information about configuration and each of theabove steps"
   echo "               as by default the script has a quiet output"
   echo ""
@@ -752,7 +807,10 @@ start_tunnel() {
   # 6. Add the policy rules to exclude certain IPs
   add_excluded_ips
 
-  # 7. Flush route cache to ensure the new rules are applied immediately.
+  # 7. Route the Firewall DNS into the Tunnel (if enabled)
+  send_firewall_dns_over_tunnel
+
+  # 8. Flush route cache to ensure the new rules are applied immediately.
   ip route flush cache
 
   log " [START] VPN tunnel and policy routing are active."
@@ -773,7 +831,10 @@ stop_tunnel() {
   # 4. Set up the DNS Firewall rules if one is using
   remove_dns_firewall_rules
 
-  # 5. Remove the interface. This is the cleanest way to stop everything.
+  # 5. Remove the Firewall DNS from going over the tunnel (if enabled)
+  remove_firewall_dns_from_tunnel
+
+  # 6. Remove the interface. This is the cleanest way to stop everything.
   remove_wireguard_interface
 
   log " [STOP] VPN tunnel and all associated rules have been removed."
@@ -800,6 +861,16 @@ show_status() {
   log " [STATUS] CUSTOMPOSTROUTING NAT Rules:"
   iptables --wait -t nat -L CUSTOMPOSTROUTING -n -v 2>/dev/null || log " CUSTOMPOSTROUTING chain not found"
   log ""
+
+  if [ "${route_firewall_dns_into_tunnel}" == "yes" ]; then
+    log " [STATUS] CUSTOMFORWARD Rirewall Rules:"
+    iptables --wait -L CUSTOMOUTPUT -n -v 2>/dev/null || log " CUSTOMOUTPUT chain not found"
+    log ""
+
+    log " [STATUS] CUSTOMINPUT NAT Rules:"
+    iptables --wait -L CUSTOMINPUT -n -v 2>/dev/null || log " CUSTOMINPUT chain not found"
+    log ""
+  fi
 
   log " [STATUS] WireGuard VPN Interface Status:"
   if ip link show "${wg_vpn_interface}" >/dev/null 2>&1; then
