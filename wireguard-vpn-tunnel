@@ -863,11 +863,11 @@ show_status() {
   log ""
 
   if [ "${route_firewall_dns_into_tunnel}" == "yes" ]; then
-    log " [STATUS] CUSTOMFORWARD Rirewall Rules:"
+    log " [STATUS] CUSTOMOUTPUT Rirewall Rules:"
     iptables --wait -L CUSTOMOUTPUT -n -v 2>/dev/null || log " CUSTOMOUTPUT chain not found"
     log ""
 
-    log " [STATUS] CUSTOMINPUT NAT Rules:"
+    log " [STATUS] CUSTOMINPUT Rules:"
     iptables --wait -L CUSTOMINPUT -n -v 2>/dev/null || log " CUSTOMINPUT chain not found"
     log ""
   fi
