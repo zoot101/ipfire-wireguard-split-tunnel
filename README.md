@@ -327,7 +327,7 @@ chown root:root /etc/init.d/wireguard-vpn-tunnel
 chmod 754 /etc/init.d/wireguard-vpn-tunnel
 ```
 
-It's not a good idea to re-test the script works correctly again by calling
+It's now a good idea to re-test the script works correctly again by calling
 it exactly as it will be called by the system upon startup.
 ```bash
 /etc/init.d/wireguard-vpn-tunnel start # Start the tunnel
