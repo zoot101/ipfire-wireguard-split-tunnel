@@ -7,7 +7,7 @@
 #######################################
 
 # Version 
-version="0.3.0"
+version="0.3.1"
 
 #######################################
 # Parameters
@@ -646,8 +646,10 @@ setup_dns_firewall_rules() {
       iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP
       iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP
     fi
+  fi
 
-    # Allow each of the IP addresses of the Local DNS Servers through the tunnel
+  # Allow each of the IP addresses of the Local DNS Servers through the tunnel if defined
+  if [ -n "${local_dns_servers[0]}" ]; then
     for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
       iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT
       iptables --wait -I CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT
@@ -674,8 +676,10 @@ remove_dns_firewall_rules() {
       iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p tcp --dports 53,853 -j DROP || true
       iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${orange_network}" -m multiport -p udp --dports 53,853 -j DROP || true
     fi
+  fi
 
-    # Allow each of the IP addresses of the Local DNS Servers through the tunnel
+  # Remove the rules for each of the IP addresses of the Local DNS Servers if defined
+  if [ -n "${local_dns_servers[0]}" ]; then
     for i in $(seq 0 1 $((N_local_dns_servers-1)) ); do
       iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p tcp --dports 53,853 -j ACCEPT || true
       iptables --wait -D CUSTOMFORWARD -o "${wg_vpn_interface}" -s "${local_dns_servers[$i]}" -m multiport -p udp --dports 53,853 -j ACCEPT || true
