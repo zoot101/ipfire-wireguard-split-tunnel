@@ -21,12 +21,12 @@ repository's README.
 
 # Contents
 
-[Background](#background)   
-[Installation](#installation)   
-- [Configuration File](#configuration-file)   
-- [Notes on DNS](#notes-on-dns)   
-[Test It Out](#test-it-out)   
-- [Enabling At Startup](#enabling-at-startup)   
+- [Background](#background)   
+- [Installation](#installation)   
+  * [Configuration File](#configuration-file)   
+  * [Notes on DNS](#notes-on-dns)   
+- [Test It Out](#test-it-out)   
+  * [Enabling At Startup](#enabling-at-startup)   
 
 # Background
 
