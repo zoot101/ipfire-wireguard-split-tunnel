@@ -1,0 +1,32 @@
+Version 0.3.1
+
+ * Make the ability to set local DNS servers independent of the block tunnel DNS parameter
+
+-- Mark <mark9000@fastmail.org>  Sun, 15 Feb 2026 10:30:11
+
+Version 0.3.0
+
+ * Added section to add the firewall rules to allow DNS traffic from the firewall itself over the tunnel
+ * Added a new policy based rule to send DNS traffic over the tunnell
+ * This is achieved by setting the route_firewall_dns_over_tunnel parameter in the config file
+ * Corrected typo in show_status
+
+* Update maintainer.
+
+-- Mark <mark9000@fastmail.org>  Wed, 11 Feb 2025 14:39:11
+
+Version 0.2.1
+
+ * Add sanity check for wg command in $PATH
+ * Tidy up comments at start & add Github link
+ * Add --wait flag to all iptables commands
+
+-- Mark <mark9000@fastmail.org>  Sun, 08 Feb 2026 10:07:31
+
+Version 0.2.0
+
+ * Initial Release on Github
+
+-- Mark <mark9000@fastmail.org> Sun, 01 Feb 2026 09:08:12
+
+
