@@ -1,6 +1,6 @@
 # Introduction
 
-This is a simple Bash script for [https://ipfire.org](IPFire) based firewalls that
+This is a simple Bash script for [IPFire](https://ipfire.org) based firewalls that
 implements a split tunnel VPN connection for Wireguard based VPN providers like
 Mullvad or NordVPN.
 
@@ -399,9 +399,17 @@ it exactly as it will be called by the system upon startup.
 
 If the above produces the desired result, move on below.
 
-Next, to enable it on startup create the following symlink.
+Next, to enable the tunnel to be started upon powerup and stopped upon shutdown
+and reboot do the following:
 ```
+# Start the Tunnel on Startup of the Firewall
 ln -s /etc/init.d/wireguard-vpn-tunnel /etc/rc.d/rc3.d/S60wireguard-vpn-tunnel
+
+# Stop the Tunnel on Reboot of the Firewall
+ln -s /etc/init.d/wireguard-vpn-tunnel /etc/rc.d/rc6.d/K65wireguard-vpn-tunnel
+
+# Stop the TUnnel on Poweroff of the Firewall
+ln -s /etc/init.d/wireguard-vpn-tunnel /etc/rc.d/rc0.d/K65wireguard-vpn-tunnel
 ```
 
 Now reboot the IPFire based firewall to test it out. The VPN connection, and
