@@ -1,3 +1,10 @@
+Version 0.3.2
+
+ * Corrected typo in help printout
+ * Added usage of Built-In function to print green or red status messages
+
+-- Mark <mark9000@fastmail.org>  Thu, 19 Feb 2026 05:16:54
+
 Version 0.3.1
 
  * Make the ability to set local DNS servers independent of the block tunnel DNS parameter
