@@ -7,7 +7,7 @@
 #######################################
 
 # Version 
-version="0.3.1"
+version="0.3.2"
 
 #######################################
 # Parameters
@@ -71,6 +71,7 @@ main() {
   
     # Start the Tunnel
     start_tunnel
+    if [ "${debug_mode}" == "no" ]; then evaluate_retval; fi
   
     # If we reached here, bringing up the tunnel was successful, disable
     # the trap for a clean exit
@@ -89,6 +90,7 @@ main() {
   
     # Stop the Tunnel
     stop_tunnel
+    if [ "${debug_mode}" == "no" ]; then evaluate_retval; fi
     exit 0
     ;;
   
@@ -215,10 +217,12 @@ log() {
   fi
 }
 
-# Exit with Error
+# Exit with Error - Print error or exit quietly in Debug
 error() {
   if [ "${debug_mode}" == "yes" ]; then
     echo "ERROR: ""$@"
+  else
+    false; evaluate_retval
   fi
   exit 1
 }
@@ -368,7 +372,7 @@ read_config_file() {
     error "No wg_vpn_interface defined in config file - Exiting"
   fi
   if [ "${wg_vpn_interface}" == "wg0" ]; then
-    error "wg_vpn_interface should not be wg0 to avoid conflicts - Exiting"
+    error "wg_vpn_interface should not be called wg0 to avoid conflicts - Exiting"
   fi
   if [ ! -f "${wg_config_file}" ]; then
     error "Wireguard Config File ${wg_config_file} does not exist - Exiting"
@@ -615,6 +619,7 @@ remove_policy_based_routing() {
 check_if_tunnel_already_exists() {
   if ip link show "${wg_vpn_interface}" >/dev/null 2>&1; then
     log " [WARNING] Tunnel ${wg_vpn_interface} already appears to be active. No action taken."
+    if [ "${debug_mode}" == "no" ]; then true; evaluate_retval; fi
     exit 0
   fi
 }
@@ -623,6 +628,7 @@ check_if_tunnel_already_exists() {
 check_if_tunnel_does_not_exist() {
   if ! ip link show "${wg_vpn_interface}" >/dev/null 2>&1; then
     log " [WARNING] Tunnel ${wg_vpn_interface} does not exist. No action taken."
+    if [ "${debug_mode}" == "no" ]; then true; evaluate_retval; fi
     exit 0
   fi
 }
@@ -777,7 +783,7 @@ print_help() {
   echo ""
   echo "  -c|--config PATH-TO-CONFIG-FILE : Override default config file path (below)"
   echo ""
-  echo "  -d|--debug : Print out detailed information about configuration and each of theabove steps"
+  echo "  -d|--debug : Print out detailed information about configuration and each of the above steps"
   echo "               as by default the script has a quiet output"
   echo ""
   echo "  -h|--help  : Print this message"
