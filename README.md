@@ -155,13 +155,28 @@ comment out the corresponding iface & network paramter above.
 
 ### wg\_config\_file
 
-This is the configuration file provided by the VPN provider. Given IPFire does not support
+This is the path to the configuration file provided by the VPN provider. Given IPFire does not support
 ipv6 (yet), its best to select the options for ipv4 only if the VPN provider gives that
 option. If both ipv6 & ipv4 are given, the script will only use the ipv4 local address.
 
 No changes to the file downloaded from the VPN provider should be needed. The only information
 that is used by the script to bring up the new Wireguard Interface are the Endpoint, its Public Key,
-the Private Key of the new Wireguard interface and its local IP address.
+the Private Key of the new Wireguard interface and its local IP address. If any firewall and routing
+rules are defined, they are ignored. The script sets up the appropriate firewall rules automatically instead.
+
+A typical example config file would would look like this:
+
+```
+[Interface]
+PrivateKey = 1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ/=12345=
+Address = 192.168.93.47/32
+DNS = 192.168.98.109
+
+[Peer]
+PublicKey = 1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ/=12345=
+AllowedIPs = 0.0.0.0/0
+Endpoint = 1.2.3.4:51820
+```
 
 ### tunnel\_ips
 
