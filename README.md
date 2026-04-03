@@ -25,6 +25,7 @@ repository's README.
 - [Installation](#installation)   
   * [Configuration File](#configuration-file)   
   * [Notes on DNS](#notes-on-dns)   
+  * [Seperating DNS for VPN and Non-VPN Devices](#seperating-dns-for-vpn-and-non-vpn-devices)
 - [Test It Out](#test-it-out)   
   * [Enabling At Startup](#enabling-at-startup)   
 
@@ -278,6 +279,10 @@ VPN IPs. It might be better to just configure Unbound through the WebUI
 to use a forwarding server instead. There is a great list here:
 [https://www.ipfire.org/docs/dns/public-servers](https://www.ipfire.org/docs/dns/public-servers)
 
+This does have the consequence of having all DNS traffic from everything (including
+the firewall itself) be routed into the VPN Tunnel, regardless of whether the standard
+internet traffic is being routed over the VPN or not.
+
 Should be "yes" or "no". Comment out or set to no if not using.
 
 ## Notes on DNS
@@ -301,13 +306,63 @@ config does not need to be changed whether the VPN is active or not.
 
 * Use IPFire's Unbound installation. This is probably the most convienent. Use the
 **route_firewall_dns_into_tunnel** option discussed above along with **block_tunnel_dns**
-option so that only the Firewall can send out DNS requests over the tunnel.
+option so that only the Firewall can send out DNS requests over the tunnel. It does however
+send ***ALL*** DNS requests into the VPN Tunnel regardless (See below).
 
-* Finally note that in the Author's experience if one is running their local DNS server,
+* Note that in the Author's experience if one is running their local DNS server,
 be it IPFire's Unbound implementation or something else like Bind9 in resursive mode,
 they may run into issues with the Root Servers refusing DNS queries from known VPN
 IPs. This will vary by your VPN Provider, but if this does happen, it's best to
 configure a forwarding DNS Server instead.
+
+## Seperating DNS For VPN and Non-VPN Devices
+
+Note that if using the **route_firewall_dns_into_tunnel** option above, along with **IPFire's**
+**Unbound** installation, ***ALL*** DNS traffic is forced into the
+Wireguard VPN Tunnel regardless if standard traffic from the originating IP is to be
+routed into the VPN tunnel or not.
+
+While this works, it does kind of mix VPN & non-VPN traffic in a way. It is more a Brute
+Force or Catch-All method. It could be a good thing to add to one's privacy from a DNS
+point of view, but may not be desirable in all cases since one may desire DNS to be treated
+the same way as standard internet traffic.
+
+There are a number of methods to address this if one is using a Self-Hosted DNS Server locally
+(this doesn't arrise if using an External DNS Server), which are briefly discussed below, but all are
+outside the scope of this script and left to the user to investigate in further detail.
+
+* It should be possible to use Iptables rules in the Mangle table  to mark connections on UDP port 53
+from the VPN excluded clients and implement additional policy based routing rules to use use those
+marks to differentiate between DNS from VPN clients and Non-VPN clients. It is
+the authors understanding that this becomes complex quickly for recursive DNS queries.
+
+* Use seperate Unbound instances on IPFire listening on different ports. The author is not sure
+if this is possible on IPFire. However assuming it is, one could then add
+DNAT rules to the CUSTOMPREROUTING chain with Iptables to re-direct DNS traffic coming from
+the Non-VPN Traffic to that 2nd instance of Unbound instead. An example of that could be the below, where
+the 2nd instance of Unbound is listening on port 5353 instead.
+
+```
+iptables -A CUSTOMPREROUTING -s 192.168.0.99 -p udp --dport 53 -j DNAT --to-destination 192.168.0.1:5353
+```
+
+The above rule will change the destination of all DNS traffic from the Non-VPN Clients to the 2nd instance of Unbound
+on port 5353 instead. An additional iptables rule would be required to accept input traffic on port
+5353 from the LAN - something like this:
+
+```
+iptables -A CUSTOMINPUT -s 192.168.0.99 -p udp --dport 5353 -j ACCEPT
+```
+
+Then in the 2nd instance of Unbound, one could use a different query-source address to allow a policy
+based routing rule to send those requests into the VPN tunnel instead. This would go well beyond IPFire's
+standard implementation and requires heavy customisation of the **Unbound** installation, so
+it may not be attractive as a result with things potentially breaking with updates.
+
+* The Bind9 DNS server has the Views feature that is designed exactly for this task, to provide
+completely different DNS responses based on the source IP of the query. Unbound does not by default
+have something similiar. However **IPFire** does not include a version of the Bind9 DNS server
+that can be installed.
 
 # Test It Out
 
